@@ -1,118 +1,354 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * Generated with the TypeScript template
- * https://github.com/react-native-community/react-native-template-typescript
- *
- * @format
- */
-
 import React from 'react';
 import {
-  SafeAreaView,
   StyleSheet,
-  ScrollView,
+  SafeAreaView,
+  Platform,
   View,
+  TouchableOpacity,
   Text,
-  StatusBar,
 } from 'react-native';
+import {WebView, WebViewMessageEvent} from 'react-native-webview';
+import {KLineHtmlEvents, KLineParams} from 'byron-kline';
+import {sendMessageToHtml, KLineNativeEvents, KLineBar} from 'byron-kline';
+import * as Config from './config';
+import axios from 'axios';
 
-import {
-  Header,
-  LearnMoreLinks,
-  Colors,
-  DebugInstructions,
-  ReloadInstructions,
-} from 'react-native/Libraries/NewAppScreen';
+type Props = {};
+type State = {
+  loading: boolean;
+  interval: Config.IntervalT;
+};
+export default class App extends React.Component<Props, State> {
+  private chart: WebView | null = null;
+  private ws: WebSocket;
+  private klineId?: number;
 
-declare const global: {HermesInternal: null | {}};
+  constructor(props: Props) {
+    super(props);
+    this.state = {
+      loading: false,
+      interval: 15,
+    };
+    this.ws = new WebSocket('wss://sock.xyt.com/ws');
+    this.ws.onmessage = (event) => {
+      const json = JSON.parse(event.data);
+      if (json.send === 'scale') {
+        this.onWsMessage(json.data);
+      }
+    };
+  }
 
-const App = () => {
-  return (
-    <>
-      <StatusBar barStyle="dark-content" />
-      <SafeAreaView>
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          style={styles.scrollView}>
-          <Header />
-          {global.HermesInternal == null ? null : (
-            <View style={styles.engine}>
-              <Text style={styles.footer}>Engine: Hermes</Text>
-            </View>
-          )}
-          <View style={styles.body}>
-            <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>Step One</Text>
-              <Text style={styles.sectionDescription}>
-                Edit <Text style={styles.highlight}>App.tsx</Text> to change
-                this screen and then come back to see your edits.
-              </Text>
-            </View>
-            <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>See Your Changes</Text>
-              <Text style={styles.sectionDescription}>
-                <ReloadInstructions />
-              </Text>
-            </View>
-            <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>Debug</Text>
-              <Text style={styles.sectionDescription}>
-                <DebugInstructions />
-              </Text>
-            </View>
-            <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>Learn More</Text>
-              <Text style={styles.sectionDescription}>
-                Read the docs to discover what to do next:
-              </Text>
-            </View>
-            <LearnMoreLinks />
-          </View>
-        </ScrollView>
+  public onWsMessage = (data: ISubData) => {
+    // console.log('---onWsMessage---', data);
+    const {interval} = this.state;
+    if (!this.chart || !data) {
+      return;
+    }
+    if (data.t !== Config.INTERVAL_SERVER[interval]) {
+      return;
+    }
+    this.chart.injectJavaScript(
+      sendMessageToHtml(KLineNativeEvents.SUBSCRIBE, {
+        kline: [
+          {
+            time: data.i * 1000,
+            open: data.o,
+            high: data.h,
+            low: data.l,
+            close: data.c,
+            volume: data.v,
+          },
+        ],
+      }),
+    );
+  };
+
+  /**
+   * 获取数据
+   */
+  public fetchScaleData = async (params: IParams) => {
+    const res = await axios.post<{data: Array<IGetData>}>(
+      'https://www.xyt.com/api/market/getScaleByDate',
+      params,
+    );
+    const list: KLineBar[] = [];
+    if (!res || !res.data || !res.data.data.length) {
+      return list;
+    }
+    this.klineId = res.data.data[0].id;
+    for (let i = 0; i < res.data.data.length; i++) {
+      const e = res.data.data[i];
+      list.push({
+        time: e.id * 1000,
+        open: e.open,
+        high: e.high,
+        low: e.low,
+        close: e.close,
+        volume: e.volume,
+      });
+    }
+    list.sort((l, r) => (l.time > r.time ? 1 : -1));
+    return list;
+  };
+
+  /**
+   * 切换周期
+   */
+  public onChangeInterval = (key: string) => {
+    const {interval} = this.state;
+    if (!this.chart || interval === Number(key)) {
+      return;
+    }
+    if (!interval) {
+      this.chart.injectJavaScript(
+        sendMessageToHtml(KLineNativeEvents.TYPE, {
+          type: 1,
+        }),
+      );
+    }
+    if (!Number(key)) {
+      this.chart.injectJavaScript(
+        sendMessageToHtml(KLineNativeEvents.TYPE, {
+          type: 2,
+        }),
+      );
+    }
+    this.ws.send(
+      JSON.stringify({
+        unsubscribe: 'scale',
+        data: {
+          symbol: 'btcusdt',
+          type: Config.INTERVAL_SERVER[interval],
+        },
+      }),
+    );
+    this.chart.injectJavaScript(
+      sendMessageToHtml(KLineNativeEvents.INTERVAL, {
+        interval: Config.INTERVAL[Number(key) as Config.IntervalT],
+      }),
+    );
+    this.setState({
+      interval: Number(key) as Config.IntervalT,
+    });
+  };
+
+  /**
+   * 图表加载
+   */
+  public onChartLoadEnd = () => {
+    if (!this.chart) {
+      return;
+    }
+    const {interval} = this.state;
+    const msg = sendMessageToHtml(KLineNativeEvents.INIT, {
+      debug: true,
+      symbol: 'btcusdt',
+      interval: Config.INTERVAL[interval],
+      pricescale: 100,
+      librarySymbolInfo: Config.librarySymbolInfo,
+      datafeedConfiguration: Config.datafeedConfig,
+      chartingLibraryWidgetOptions: Config.chartingLibraryWidgetOptions,
+    });
+    this.chart.injectJavaScript(msg);
+  };
+
+  /**
+   * 监听 WebView
+   */
+  public onWebViewMessage = (e: WebViewMessageEvent) => {
+    try {
+      const msg = JSON.parse(e.nativeEvent.data);
+      if (msg && msg.event) {
+        this.onChartMessage(msg.event, msg.data || {});
+      }
+    } catch (e) {
+      console.log(e);
+    }
+  };
+
+  /**
+   * 监听图表事件
+   */
+  public onChartMessage = async (
+    event: KLineHtmlEvents,
+    params: KLineParams,
+  ) => {
+    if (!this.chart) {
+      return;
+    }
+    const {interval} = this.state;
+    switch (event) {
+      case KLineHtmlEvents.INIT_DONE:
+        console.log(' >> onChartMessage:', '初始化完成');
+        break;
+      case KLineHtmlEvents.FETCH_HISTORY:
+        console.log(' >> onChartMessage:', '获取历史数据');
+        const bars = await this.fetchScaleData({
+          ...Config.KLineIntervalResult(interval, this.klineId),
+          type: Config.INTERVAL_SERVER[interval],
+          symbol: 'btcusdt',
+        });
+        this.chart.injectJavaScript(
+          sendMessageToHtml(KLineNativeEvents.HISTORY, {
+            kline: bars,
+          }),
+        );
+        break;
+      case KLineHtmlEvents.HISTORY_DONE:
+        console.log(' >> onChartMessage:', '历史数据处理完成');
+        if (params.isFirst) {
+          this.ws.send(
+            JSON.stringify({
+              subscribe: 'scale',
+              data: {
+                symbol: 'btcusdt',
+                type: Config.INTERVAL_SERVER[interval],
+              },
+            }),
+          );
+        }
+        break;
+      case KLineHtmlEvents.INTERVAL_SWITCH:
+        console.log(' >> onChartMessage:', '周期切换');
+        break;
+      case KLineHtmlEvents.INTERVAL_DONE:
+        console.log(' >> onChartMessage:', '周期处理完成');
+        break;
+      case KLineHtmlEvents.CREATE_SHOT_DONE:
+        console.log(' >> onChartMessage:', '创建截图完成');
+        break;
+      case KLineHtmlEvents.TYPE_DONE:
+        console.log(' >> onChartMessage:', '类型处理完成');
+        break;
+    }
+  };
+
+  /**
+   * 创建指标
+   */
+  public createChartStudy = () => {
+    if (!this.chart) {
+      return;
+    }
+    this.chart.injectJavaScript(
+      sendMessageToHtml(KLineNativeEvents.DEFAULT, {
+        event: 'chart',
+        data: {event: 'removeAllStudies'},
+      }),
+    );
+    this.chart.injectJavaScript(
+      sendMessageToHtml(KLineNativeEvents.STUDY, {
+        studyName: 'Volume',
+      }),
+    );
+    const arr = [5, 10, 30, 60];
+    for (let i = 0; i < arr.length; i++) {
+      const study = sendMessageToHtml(KLineNativeEvents.STUDY, {
+        studyName: 'Moving Average',
+        studyValue: [arr[i]],
+        // studyPlot: options.study_plot[key]
+      });
+      this.chart.injectJavaScript(study);
+    }
+  };
+
+  public render() {
+    let source;
+    if (Platform.OS === 'ios') {
+      source = require('byron-kline/dist/index.html');
+    } else {
+      const uri = 'file:///android_asset/raw/';
+      const dist = 'node_modules_byronkline_dist_index.html';
+      source = {uri: `${uri}${dist}`};
+    }
+    const {interval} = this.state;
+    return (
+      <SafeAreaView style={styles.app}>
+        <WebView
+          source={source}
+          style={styles.app}
+          originWhitelist={['*']}
+          ref={(ref) => (this.chart = ref)}
+          onMessage={this.onWebViewMessage}
+          onLoadEnd={this.onChartLoadEnd}
+        />
+        <View style={styles.footer}>
+          {Object.keys(Config.INTERVAL).map((e) => {
+            const isActive = interval === Number(e);
+            return (
+              <TouchableOpacity
+                key={e}
+                style={styles.footer_item}
+                onPress={() => this.onChangeInterval(e)}>
+                <Text
+                  style={[
+                    styles.footer_text,
+                    isActive && styles.footer_text_active,
+                  ]}>
+                  {Config.INTERVAL_NAME[Number(e) as Config.IntervalT]}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </SafeAreaView>
-    </>
-  );
+    );
+  }
+}
+
+type IParams = {
+  from: number;
+  size?: number;
+  symbol: string;
+  to: number;
+  type: string;
+};
+
+type IGetData = {
+  symbol: string;
+  type: string;
+  date: string;
+  amount: number;
+  volume: number;
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+  id: number;
+};
+
+type ISubData = {
+  a: number;
+  s: string;
+  c: number;
+  t: string;
+  v: number;
+  h: number;
+  i: number;
+  l: number;
+  o: number;
 };
 
 const styles = StyleSheet.create({
-  scrollView: {
-    backgroundColor: Colors.lighter,
-  },
-  engine: {
-    position: 'absolute',
-    right: 0,
-  },
-  body: {
-    backgroundColor: Colors.white,
-  },
-  sectionContainer: {
-    marginTop: 32,
-    paddingHorizontal: 24,
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: Colors.black,
-  },
-  sectionDescription: {
-    marginTop: 8,
-    fontSize: 18,
-    fontWeight: '400',
-    color: Colors.dark,
-  },
-  highlight: {
-    fontWeight: '700',
+  app: {
+    flex: 1,
+    backgroundColor: '#535354',
   },
   footer: {
-    color: Colors.dark,
-    fontSize: 12,
-    fontWeight: '600',
-    padding: 4,
-    paddingRight: 12,
-    textAlign: 'right',
+    height: 34,
+    backgroundColor: '#28282A',
+    flexDirection: 'row',
+  },
+  footer_item: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  footer_text: {
+    color: '#fff',
+    fontSize: 10,
+  },
+  footer_text_active: {
+    color: '#C7A976',
   },
 });
-
-export default App;
