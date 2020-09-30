@@ -5512,6 +5512,11 @@ react-is@^16.12.0, react-is@^16.8.1, react-is@^16.8.4, react-is@^16.8.6:
   resolved "https://registry.yarnpkg.com/react-is/-/react-is-16.13.1.tgz#789729a4dc36de2999dc156dd6c1d9c18cea56a4"
   integrity sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ==
 
+react-native-kline@^2.0.3:
+  version "2.0.3"
+  resolved "https://registry.yarnpkg.com/react-native-kline/-/react-native-kline-2.0.3.tgz#0225a1ea416b910a4e5e77ee86b9c919a6032db0"
+  integrity sha512-16Bwpy6M/7LcSsEkM14Ge0IBGoWkj4SJUqnDEMnWhkOcsqmsDWr+OC+DEQNqHuTpZJskVHUxUVANUdSWyvw5ZA==
+
 react-native-webview@^10.4.0:
   version "10.4.0"
   resolved "https://registry.yarnpkg.com/react-native-webview/-/react-native-webview-10.4.0.tgz#81602b42618eb1b085074e5b16755610ca4bdadf"
